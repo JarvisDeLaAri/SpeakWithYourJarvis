@@ -33,7 +33,7 @@ AUDIO_DIR = Path(__file__).parent / "audio"
 
 # OpenClaw webhook
 OPENCLAW_HOST = os.environ.get("OPENCLAW_HOST", "127.0.0.1")
-OPENCLAW_PORT = int(os.environ.get("OPENCLAW_PORT", "18789"))
+OPENCLAW_PORT = int(os.environ.get("OPENCLAW_PORT", "0"))
 OPENCLAW_TOKEN = os.environ.get("OPENCLAW_TOKEN", "")
 
 # Ensure audio directory exists

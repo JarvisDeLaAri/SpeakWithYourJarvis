@@ -1,6 +1,6 @@
 # Voice Chat Health & Performance Audit Guide 🦞
 
-*15 suggestions to audit, monitor, and improve the voice chat service (port 10010)*
+*15 suggestions to audit, monitor, and improve the voice chat service*
 
 ---
 
