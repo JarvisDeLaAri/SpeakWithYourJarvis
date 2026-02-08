@@ -1,0 +1,22 @@
+# Database
+*.db
+
+# Logs
+*.log
+
+# Audio files (generated)
+audio/
+
+# SSL certificates (sensitive)
+ssl/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+
+# IDE
+.vscode/
+.idea/
+.env
