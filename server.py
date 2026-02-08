@@ -123,6 +123,7 @@ def call_main_session(text, msg_id):
         url = f"http://{OPENCLAW_HOST}:{OPENCLAW_PORT}/v1/chat/completions"
         data = json.dumps({
             "model": "agent:main",
+            "user": "main",
             "messages": [
                 {
                     "role": "user",
