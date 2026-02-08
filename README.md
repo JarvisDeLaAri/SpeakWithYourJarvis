@@ -31,8 +31,9 @@ You speak into the browser
          │ text + msg_id
          ▼
 ┌──────────────────┐
-│  🧠 Claude API   │  Generates a concise voice-friendly response
-└────────┬─────────┘    (falls back to OpenClaw agent if no API key)
+│  🧠 Main Session │  Sends to OpenClaw main session (the real Jarvis)
+│                  │  Full memory, personality, and conversation context
+└────────┬─────────┘
          │ response text
          ▼
 ┌──────────────────┐
@@ -83,12 +84,14 @@ When you speak, the browser records in 8-second chunks. Each chunk goes through:
 
 ### 3. AI Response
 
-Two paths for getting a response:
+Voice messages are routed through the **OpenClaw main session** — the same Jarvis that handles WhatsApp, cron jobs, and everything else. This means:
 
-- **Direct API** (fast) — If `ANTHROPIC_API_KEY` is set, calls Claude Sonnet directly. ~2-3 second response time.
-- **OpenClaw Agent** (flexible) — Spawns an agent session via `/hooks/agent` webhook. Agent processes and calls back to `/api/respond`. Slower but uses full agent capabilities.
+- Full memory and conversation context
+- Personality, preferences, and soul
+- Access to all tools and integrations
+- Continuity across voice and text conversations
 
-Both paths end with the response saved to SQLite with TTS audio.
+The response is saved to SQLite and converted to TTS audio for playback.
 
 ### 4. Text-to-Speech
 

@@ -113,122 +113,51 @@ def db_mark_delivered(msg_id):
 
 # ============ OPENCLAW INTEGRATION ============
 
-def notify_openclaw_wake(text, msg_id):
-    """Send wake event to main session (for context/logging)"""
-    try:
-        url = f"http://{OPENCLAW_HOST}:{OPENCLAW_PORT}/hooks/wake"
-        data = json.dumps({
-            "text": f"[🎤 Voice #{msg_id}] {text}",
-            "mode": "next-heartbeat"  # Don't interrupt, just log
-        }).encode('utf-8')
-        
-        req = urllib.request.Request(url, data=data, method='POST')
-        req.add_header('Content-Type', 'application/json')
-        req.add_header('Authorization', f'Bearer {OPENCLAW_TOKEN}')
-        
-        with urllib.request.urlopen(req, timeout=5) as response:
-            log_message("WEBHOOK", f"Logged to main: #{msg_id}")
-    except Exception as e:
-        log_message("ERROR", f"Wake failed: {e}")
-
-def call_claude_direct(text, msg_id):
-    """Call Claude API directly for fast voice responses"""
-    import os
-    api_key = os.environ.get('ANTHROPIC_API_KEY', '')
-    
-    if not api_key:
-        log_message("ERROR", "No ANTHROPIC_API_KEY - falling back to OpenClaw agent")
-        return call_claude_via_openclaw(text, msg_id)
+def call_main_session(text, msg_id):
+    """Send voice message to OpenClaw main session and get response.
+    This goes through the real Jarvis with full memory, personality, and context."""
     
     try:
-        log_timing(str(msg_id), "CLAUDE_START", "calling claude sonnet direct")
+        log_timing(str(msg_id), "MAIN_SESSION_START", "sending to main session")
         
-        url = "https://api.anthropic.com/v1/messages"
+        url = f"http://{OPENCLAW_HOST}:{OPENCLAW_PORT}/v1/chat/completions"
         data = json.dumps({
-            "model": "claude-sonnet-4-20250514",
-            "max_tokens": 300,
+            "model": "agent:main",
             "messages": [
                 {
-                    "role": "user", 
-                    "content": f"You are Jarvis, a helpful voice assistant. Respond concisely (1-3 sentences) to this voice message. Be friendly and natural.\n\nUser said: {text}"
+                    "role": "user",
+                    "content": f"[🎤 Voice Message #{msg_id}] The user sent a voice message through the voice chat app. Respond concisely (1-3 sentences) — this will be converted to speech. Be natural and conversational.\n\nThey said: \"{text}\""
                 }
             ]
         }).encode('utf-8')
         
         req = urllib.request.Request(url, data=data, method='POST')
         req.add_header('Content-Type', 'application/json')
-        req.add_header('x-api-key', api_key)
-        req.add_header('anthropic-version', '2023-06-01')
-        
-        with urllib.request.urlopen(req, timeout=30) as response:
-            result = json.loads(response.read().decode())
-            response_text = result['content'][0]['text']
-            log_timing(str(msg_id), "CLAUDE_DONE", f"response: {response_text[:30]}...")
-            return response_text
-            
-    except Exception as e:
-        log_message("ERROR", f"Claude API failed: {e}")
-        return None
-
-def call_claude_via_openclaw(text, msg_id):
-    """Use OpenClaw's /hooks/agent - agent calls voice API directly"""
-    
-    try:
-        log_timing(str(msg_id), "AGENT_START", "spawning openclaw agent")
-        
-        # The agent will call /api/respond directly
-        voice_api_url = f"https://127.0.0.1:{PORT}/api/respond"
-        
-        agent_instructions = f"""You are Jarvis voice assistant. A user sent this voice message:
-
-"{text}"
-
-Respond concisely (1-2 sentences max). Then you MUST send your response to the voice app by running this command:
-
-curl -k -X POST {voice_api_url} -H 'Content-Type: application/json' -d '{{"text": "YOUR_RESPONSE_HERE"}}'
-
-Replace YOUR_RESPONSE_HERE with your actual response. Do this immediately."""
-
-        url = f"http://{OPENCLAW_HOST}:{OPENCLAW_PORT}/hooks/agent"
-        data = json.dumps({
-            "message": agent_instructions,
-            "name": "Voice",
-            "sessionKey": f"voice:{msg_id}",
-            "wakeMode": "now",
-            "deliver": False,
-            "model": "anthropic/claude-opus-4-5",
-            "timeoutSeconds": 60
-        }).encode('utf-8')
-        
-        req = urllib.request.Request(url, data=data, method='POST')
-        req.add_header('Content-Type', 'application/json')
         req.add_header('Authorization', f'Bearer {OPENCLAW_TOKEN}')
         
-        with urllib.request.urlopen(req, timeout=10) as response:
+        with urllib.request.urlopen(req, timeout=120) as response:
             result = json.loads(response.read().decode())
-            log_timing(str(msg_id), "AGENT_SPAWNED", f"runId: {result.get('runId', 'unknown')}")
-            log_message("AGENT", f"Spawned for #{msg_id} - agent will call /api/respond")
-            return "AGENT_HANDLING"  # Signal that agent is handling it
+            response_text = result.get('choices', [{}])[0].get('message', {}).get('content', '')
+            
+            if response_text:
+                log_timing(str(msg_id), "MAIN_SESSION_DONE", f"response: {response_text[:50]}...")
+                return response_text
+            else:
+                log_message("ERROR", f"Empty response from main session")
+                return None
             
     except Exception as e:
-        log_message("ERROR", f"OpenClaw agent failed: {e}")
+        log_message("ERROR", f"Main session call failed: {e}")
         return None
 
 def process_voice_message(text, msg_id):
-    """Process voice message: get AI response and save to DB"""
-    # Log to main session (non-blocking)
-    notify_openclaw_wake(text, msg_id)
+    """Process voice message: send to main session, get response, generate TTS"""
     
-    # Get Claude response directly (or via agent)
-    response = call_claude_direct(text, msg_id)
-    
-    if response == "AGENT_HANDLING":
-        # Agent is spawned and will call /api/respond itself
-        log_timing(str(msg_id), "11_AGENT_DELEGATED", "agent will handle response")
-        return "PENDING"
+    # Send to main session (the real Jarvis)
+    response = call_main_session(text, msg_id)
     
     if response:
-        # Direct API response - save to DB and generate TTS
+        # Save response to DB
         log_timing(str(msg_id), "12_DB_INSERT_START", "inserting jarvis msg to db")
         response_id = db_insert_message('jarvis', response)
         log_timing(str(msg_id), "13_DB_INSERT_DONE", f"msg_id: {response_id}")
