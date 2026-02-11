@@ -127,7 +127,7 @@ def call_main_session(text, msg_id):
             "messages": [
                 {
                     "role": "user",
-                    "content": f"[🎤 Voice Message #{msg_id}] The user sent a voice message through the voice chat app. Respond concisely (1-3 sentences) — this will be converted to speech. Be natural and conversational.\n\nThey said: \"{text}\""
+                    "content": f"[🎤 Voice Message #{msg_id}] The user sent a voice message through the voice chat app. Respond concisely (1-3 sentences) — this will be converted to speech by the app's own TTS engine. Do NOT use the tts tool. Do NOT include MEDIA: tags. Just reply with plain text.\n\nThey said: \"{text}\""
                 }
             ]
         }).encode('utf-8')
@@ -152,30 +152,25 @@ def call_main_session(text, msg_id):
         return None
 
 def process_voice_message(text, msg_id):
-    """Process voice message: send to main session, get response, generate TTS"""
+    """Process voice message: send to main session, get response, generate TTS.
+    Generates TTS first using msg_id as filename hint, then inserts complete row."""
     
     # Send to main session (the real Jarvis)
     response = call_main_session(text, msg_id)
     
     if response:
-        # Save response to DB
-        log_timing(str(msg_id), "12_DB_INSERT_START", "inserting jarvis msg to db")
-        response_id = db_insert_message('jarvis', response)
-        log_timing(str(msg_id), "13_DB_INSERT_DONE", f"msg_id: {response_id}")
-        
-        # Generate TTS
+        # Generate TTS BEFORE inserting to DB (use user msg_id for temp filename)
         log_timing(str(msg_id), "14_TTS_START", "generating voice")
-        audio_path = generate_tts(response, response_id)
+        temp_name = f"jarvis_r{msg_id}"
+        audio_path = generate_tts(response, temp_name)
         log_timing(str(msg_id), "15_TTS_DONE", f"audio: {audio_path}")
         
-        # Update with audio path
-        if audio_path:
-            conn = sqlite3.connect(str(DB_FILE))
-            conn.execute('UPDATE messages SET audio_path = ? WHERE id = ?', (audio_path, response_id))
-            conn.commit()
-            conn.close()
+        # Insert complete row with audio — poll always sees it with audio ready
+        log_timing(str(msg_id), "12_DB_INSERT_START", "inserting jarvis msg with audio")
+        response_id = db_insert_message('jarvis', response, audio_path=audio_path)
+        log_timing(str(msg_id), "13_DB_INSERT_DONE", f"msg_id: {response_id}")
         
-        log_timing(str(msg_id), "16_READY_FOR_POLL", "response ready")
+        log_timing(str(msg_id), "16_READY_FOR_POLL", "response ready with audio")
         log_message("JARVIS", f"#{response_id}: {response[:50]}...")
         return response_id
     
@@ -195,7 +190,7 @@ def generate_tts(text, msg_id):
             '-v', 'en-GB-RyanNeural',
             '-f', str(audio_path),
             '--timeout', '15000'
-        ], capture_output=True, timeout=30, cwd='/tmp/edge-tts')
+        ], capture_output=True, timeout=30)
         
         if audio_path.exists():
             log_message("TTS", f"Generated audio: {audio_filename}")
@@ -837,12 +832,20 @@ async def speak_handler(request):
         msg_id = db_insert_message('user', text)
         log_timing(req_id, "8_DB_INSERT_DONE", f"msg_id: {msg_id}")
         
-        # AUTO-RESPOND: Call Claude directly and save response
-        log_timing(req_id, "9_AI_START", "calling claude directly")
-        response_id = process_voice_message(text, msg_id)
-        log_timing(req_id, "10_AI_DONE", f"response_id: {response_id}")
+        # Return immediately so the client can show the user message right away
+        # Process AI response in background thread
+        import threading
+        def background_respond():
+            try:
+                log_timing(req_id, "9_AI_START", "calling claude directly")
+                process_voice_message(text, msg_id)
+                log_timing(req_id, "10_AI_DONE", "response ready")
+            except Exception as e:
+                log_message("ERROR", f"Background respond failed: {e}")
         
-        return web.json_response({'message_id': msg_id, 'response_id': response_id, 'req_id': req_id})
+        threading.Thread(target=background_respond, daemon=True).start()
+        
+        return web.json_response({'message_id': msg_id, 'req_id': req_id})
         
     except Exception as e:
         log_message("ERROR", str(e))

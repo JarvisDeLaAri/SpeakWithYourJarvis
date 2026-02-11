@@ -197,6 +197,53 @@ voice-chat/
 
 ---
 
+---
+
+## Security Hardening (v1.2.0)
+
+### What Changed
+The voice chat server was migrated from running as `root` to a dedicated service user as part of a full VPS security hardening. All apps now run under least-privilege users, serve HTTPS directly (no Nginx proxy), and are firewalled.
+
+### Why
+Running web-facing apps as root means any vulnerability gives an attacker full system access. With a dedicated service user, a compromised app can only touch its own files — no SSH keys, no API tokens, no other services.
+
+### What Broke & How We Fixed It
+
+| # | Issue | Cause | Fix |
+|---|-------|-------|-----|
+| 1 | **Whisper model download failed** | HuggingFace cache at `/root/.cache/` — the service user couldn't write | Created a dedicated HOME directory as HOME, set `HF_HOME` env var, ACL on existing cache |
+| 2 | **Messages saved but never forwarded to Jarvis** | `.env` not loaded — `OPENCLAW_PORT` defaulted to `0` (disabled) | Added `EnvironmentFile=` to systemd service |
+| 3 | **TTS failed — npm cache permission denied** | `npx node-edge-tts` tried to write to `/nonexistent/.npm/` | Installed `node-edge-tts` globally, set proper HOME |
+| 4 | **TTS subprocess error — cwd not found** | Old `cwd='/tmp/edge-tts'` path never existed | Removed cwd param (not needed with global install) |
+| 5 | **User message delayed until full AI cycle complete** | `/api/speak` was synchronous — waited for AI + TTS before returning | Return immediately, run AI+TTS in background thread |
+| 6 | **Audio never played — race condition** | Message inserted to DB before TTS finished → poll got `audio_path: null` | Generate TTS first, then insert complete row with audio |
+| 7 | **Response showed raw `MEDIA:` file paths** | Main session used its own TTS tool, injecting MEDIA tags into response text | Updated prompt: "plain text only, app handles TTS" |
+
+### Current Architecture
+```
+User speaks → Whisper transcribes → text shown instantly (async return)
+  → background thread:
+      text → OpenClaw main session → plain text response
+      → node-edge-tts generates MP3
+      → complete row (text + audio_path) inserted to DB
+  → client polls → sees message with audio → displays text + plays voice
+```
+
+### Service Config
+```ini
+[Service]
+User=<service-user>
+Group=<service-user>
+EnvironmentFile=/path/to/voice-chat/.env
+Environment=HOME=/var/lib/<service-user>
+Environment=HF_HOME=/path/to/huggingface/cache
+```
+
+---
+
+## Changelog
+
+**v1.2.0.0** — Security hardening: dedicated service user, direct HTTPS, async response, TTS race fix
 **v1.0.0** — First sacred release 🦞
 
 Built by Jarvis de la Ari & Ariel @ Bresleveloper AI
