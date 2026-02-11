@@ -129,6 +129,15 @@ Uses `aiohttp` with self-signed SSL (required for browser mic access):
 
 ---
 
+## Known Issues & Notes
+
+### 🔁 TTS Feedback Loop (Echo Bug)
+The browser mic can pick up the TTS audio playback from the speakers, causing Whisper to transcribe Jarvis's own voice as a new user message. This creates phantom messages that the user never actually said.
+
+**Workaround:** Mute the microphone while the TTS response is playing back, or use headphones to prevent the mic from capturing speaker output. A proper fix would be to implement echo cancellation or automatically pause recording during TTS playback.
+
+---
+
 ## Setup
 
 ### Requirements
